@@ -1,0 +1,16 @@
+import './style.css';
+const $=id=>document.getElementById(id),canvas=$('canvas'),ctx=canvas.getContext('2d');
+let source,result,name='drawing',url,worker,job=0,showOriginal=false,timer;
+function status(s){$('status').textContent=s;}
+function draw(){const data=showOriginal?source:result||source;if(data)ctx.putImageData(data,0,0);$('original').classList.toggle('active',showOriginal);$('smoothed').classList.toggle('active',!showOriginal);}
+function process(){if(!source)return;const id=++job;worker?.terminate();$('save').disabled=true;result=null;draw();status('Smoothing your drawing…');worker=new Worker(new URL('./worker.js',import.meta.url),{type:'module'});worker.onmessage=({data})=>{if(id!==job)return;if(data.error){status(data.error);return;}result=new ImageData(data.pixels,source.width,source.height);draw();$('save').disabled=false;status('Ready. Transparent PNG, original dimensions.');worker.terminate();};worker.onerror=()=>status('Processing failed. Try a smaller PNG.');worker.postMessage({pixels:source.data,width:source.width,height:source.height,strength:+$('strength').value,range:+$('range').value});}
+$('file').onchange=async e=>{const file=e.target.files[0];if(!file)return;const ticket=++job;worker?.terminate();$('save').disabled=true;status('Opening image…');try{
+ const signature=new Uint8Array(await file.slice(0,8).arrayBuffer());if(signature.join(',')!=='137,80,78,71,13,10,26,10')throw Error('Please choose a PNG image.');
+ const image=new Image(),localURL=URL.createObjectURL(file);try{image.src=localURL;await image.decode();}finally{URL.revokeObjectURL(localURL);}if(ticket!==job)return;
+ if(image.naturalWidth*image.naturalHeight>16000000)throw Error('Please use a PNG up to 16 megapixels for this first version.');
+ canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0);source=ctx.getImageData(0,0,canvas.width,canvas.height);result=null;name=file.name.replace(/\.png$/i,'');$('filename').textContent=file.name;$('dimensions').textContent=`${canvas.width} × ${canvas.height}`;$('empty').hidden=true;$('preview').hidden=false;showOriginal=false;process();
+ }catch(err){status(err.message);if(source&&result)$('save').disabled=false;}e.target.value='';};
+$('replace').onclick=()=>$('file').click();
+for(const id of ['strength','range'])$(id).oninput=()=>{$(id+'-value').textContent=$(id).value;clearTimeout(timer);++job;worker?.terminate();$('save').disabled=true;status('Updating…');timer=setTimeout(process,150);};
+$('original').onclick=()=>{showOriginal=true;draw();};$('smoothed').onclick=()=>{showOriginal=false;draw();};
+$('save').onclick=()=>{if(!result)return;const exportCanvas=document.createElement('canvas');exportCanvas.width=result.width;exportCanvas.height=result.height;exportCanvas.getContext('2d').putImageData(result,0,0);exportCanvas.toBlob(blob=>{if(!blob){status('Could not export this image.');return;}if(url)URL.revokeObjectURL(url);url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name+'-smoothed.png';document.body.append(a);a.click();a.remove();status('PNG exported. Save to Files to use it in Procreate.');},'image/png');};
